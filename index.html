@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Social Bandit Task - Research Study</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; background-color: #f0f2f5; }
+        #game-container { text-align: center; background: white; padding: 40px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); max-width: 700px; width: 90%; }
+        .hidden { display: none; }
+        .bandit-container { display: grid; grid-template-columns: 1fr 1fr; gap: 25px; margin: 30px 0; }
+        .square { width: 120px; height: 120px; cursor: pointer; border-radius: 12px; transition: all 0.2s; border: 5px solid transparent; margin: auto; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .square:hover { transform: translateY(-5px); box-shadow: 0 8px 15px rgba(0,0,0,0.2); }
+        .square:active { transform: scale(0.95); }
+        
+        #red { background-color: #ff4757; }
+        #blue { background-color: #1e90ff; }
+        #green { background-color: #2ed573; }
+        #yellow { background-color: #ffa502; }
+
+        #chart-container { width: 100%; height: 350px; margin-top: 30px; padding-top: 20px; border-top: 2px solid #eee; }
+        .stats-header { font-size: 1.4rem; font-weight: bold; color: #2f3542; margin-bottom: 15px; }
+        #feedback { font-size: 1.2rem; height: 30px; font-weight: 600; margin-bottom: 15px; }
+        #loading-overlay { font-style: italic; color: #ff4757; font-weight: bold; margin-bottom: 10px; }
+        input[type="text"] { padding: 12px; font-size: 1rem; border-radius: 8px; border: 1px solid #ccc; width: 250px; margin-bottom: 20px; }
+        button { padding: 12px 30px; font-size: 1rem; background-color: #2f3542; color: white; border: none; border-radius: 8px; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <div id="welcome-screen">
+        <h1>Decision Making Study</h1>
+        <p>Complete three blocks of 70 trials. Earn as many points as possible.</p>
+        <input type="text" id="participant-id" placeholder="Enter Participant ID">
+        <br>
+        <button onclick="startExperiment()">Start Experiment</button>
+    </div>
+
+    <div id="task-screen" class="hidden">
+        <div id="loading-overlay" class="hidden">Syncing historical data...</div>
+        <div class="stats-header">
+            Block: <span id="block-num">1</span>/3 | Trial: <span id="trial-count">1</span>/70
+        </div>
+        <div class="stats-header" style="color: #2ed573;">Total Points: <span id="total-points">0</span></div>
+        <div id="feedback"></div>
+        
+        <div class="bandit-container">
+            <div id="red" class="square" onclick="makeChoice('Red')"></div>
+            <div id="blue" class="square" onclick="makeChoice('Blue')"></div>
+            <div id="green" class="square" onclick="makeChoice('Green')"></div>
+            <div id="yellow" class="square" onclick="makeChoice('Yellow')"></div>
+        </div>
+
+        <div id="chart-container" class="hidden">
+            <canvas id="leaderboardChart"></canvas>
+        </div>
+    </div>
+
+    <div id="end-screen" class="hidden">
+        <h2 id="end-title">Block Complete</h2>
+        <p id="final-stats"></p>
+        <button onclick="setupNextBlock()">Continue to Next Block</button>
+    </div>
+</div>
+
+<script>
+    // --- CONFIG ---
+    const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyT1KB8qNbcRetFcHfxGM3nD1UfiQ5xSAGZ-3BrBflKlaRXqxPiopmT1zGbjgKtlW2t/exec";
+    const TRIALS_PER_BLOCK = 70;
+    const REWARD_VALUE = 10;
+    const PROBABILITIES = [0.2, 0.4, 0.6, 0.8];
+    const BLOCK_TYPES = ["Private", "Continuous", "Intermittent"];
+
+    // --- STATE ---
+    let participantId, currentBlockIndex = 0, currentTrial = 1;
+    let totalPoints = 0, lastChoice = null;
+    let blockOrder = [...BLOCK_TYPES].sort(() => Math.random() - 0.5);
+    let colorProbs = {};
+    let blockData = [];
+    let myChart = null;
+    let allHistoricalData = []; 
+
+    function startExperiment() {
+        participantId = document.getElementById('participant-id').value.trim() || "User_" + Math.random().toString(36).substr(2, 5);
+        document.getElementById('welcome-screen').classList.add('hidden');
+        setupNextBlock();
+    }
+
+    async function fetchHistoricalData() {
+        document.getElementById('loading-overlay').classList.remove('hidden');
+        try {
+            const response = await fetch(WEB_APP_URL);
+            allHistoricalData = await response.json();
+            console.log("Historical data cached.");
+        } catch (e) {
+            console.error("Cache fetch failed:", e);
+        }
+        document.getElementById('loading-overlay').classList.add('hidden');
+    }
+
+    async function setupNextBlock() {
+        if (currentBlockIndex >= blockOrder.length) {
+            document.getElementById('end-screen').innerHTML = "<h2>Experiment Complete</h2><p>Thank you for your participation!</p>";
+            return;
+        }
+
+        currentTrial = 1;
+        totalPoints = 0;
+        lastChoice = null;
+        blockData = [];
+
+        const shuffledProbs = [...PROBABILITIES].sort(() => Math.random() - 0.5);
+        colorProbs = { 'Red': shuffledProbs[0], 'Blue': shuffledProbs[1], 'Green': shuffledProbs[2], 'Yellow': shuffledProbs[3] };
+
+        // PRE-FETCH DATA ONCE TO ELIMINATE LAG
+        await fetchHistoricalData();
+
+        document.getElementById('end-screen').classList.add('hidden');
+        document.getElementById('task-screen').classList.remove('hidden');
+        document.getElementById('block-num').innerText = currentBlockIndex + 1;
+        updateUI();
+    }
+
+    function makeChoice(color) {
+        const prob = colorProbs[color];
+        const earned = Math.random() < prob ? REWARD_VALUE : 0;
+        
+        const isSwitch = (lastChoice !== null && lastChoice !== color) ? 1 : 0;
+        totalPoints += earned;
+        const socialConformity = (prob === 0.8) ? 1 : 0;
+
+        blockData.push({
+            Participant_ID: participantId,
+            Block_Condition: blockOrder[currentBlockIndex],
+            Trial_Number: currentTrial,
+            Choice_Color: color,
+            Points_Earned: earned,
+            Total_Accumulated: totalPoints,
+            Is_Switch: isSwitch,
+            Social_Conformity: socialConformity
+        });
+        
+        const feedback = document.getElementById('feedback');
+        feedback.innerText = earned > 0 ? `+${earned} Points!` : "0 Points.";
+        feedback.style.color = earned > 0 ? "#2ed573" : "#ff4757";
+
+        lastChoice = color;
+        handleSocialDisplay(); 
+
+        if (currentTrial >= TRIALS_PER_BLOCK) {
+            endBlock();
+        } else {
+            currentTrial++;
+            updateUI();
+        }
+    }
+
+    function handleSocialDisplay() {
+        const condition = blockOrder[currentBlockIndex];
+        const chartDiv = document.getElementById('chart-container');
+
+        if (condition === "Private") {
+            chartDiv.classList.add('hidden');
+        } else if (condition === "Continuous") {
+            chartDiv.classList.remove('hidden');
+            renderLeaderboard();
+        } else if (condition === "Intermittent") {
+            if (currentTrial % 5 === 0) {
+                chartDiv.classList.remove('hidden');
+                renderLeaderboard();
+            } else {
+                chartDiv.classList.add('hidden');
+            }
+        }
+    }
+
+    function renderLeaderboard() {
+        // FILTER CACHE LOCALLY (INSTANT)
+        const scores = allHistoricalData
+            .filter(h => parseInt(h.trial_number) === currentTrial)
+            .map(h => h.total_points);
+
+        if (myChart) myChart.destroy();
+        
+        const ctx = document.getElementById('leaderboardChart').getContext('2d');
+        const maxPossible = currentTrial * REWARD_VALUE;
+        const binCount = 10;
+        const bins = new Array(binCount).fill(0);
+        const step = Math.max(1, maxPossible / binCount);
+
+        scores.forEach(s => {
+            let binIdx = Math.floor(s / step);
+            if (binIdx >= binCount) binIdx = binCount - 1;
+            bins[binIdx]++;
+        });
+
+        myChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: bins.map((_, i) => `${Math.round(i * step)}-${Math.round((i + 1) * step)}`),
+                datasets: [{
+                    label: `Others at Trial ${currentTrial}`,
+                    data: bins,
+                    backgroundColor: bins.map((_, i) => {
+                        const userBin = Math.min(binCount - 1, Math.floor(totalPoints / step));
+                        return i === userBin ? '#ff4757' : 'rgba(47, 53, 66, 0.4)';
+                    }),
+                    borderColor: '#2f3542',
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
+                plugins: {
+                    title: { display: true, text: `Points Distribution (Trial ${currentTrial})` },
+                    subtitle: { display: true, text: `Your current score (${totalPoints}) is highlighted in Red.`, color: '#666' }
+                }
+            }
+        });
+    }
+
+    function endBlock() {
+        fetch(WEB_APP_URL, {
+            method: 'POST',
+            mode: 'no-cors',
+            body: JSON.stringify(blockData)
+        });
+
+        document.getElementById('task-screen').classList.add('hidden');
+        document.getElementById('end-screen').classList.remove('hidden');
+        document.getElementById('final-stats').innerHTML = `Block Complete.<br>Final Score: <strong>${totalPoints}</strong>`;
+        currentBlockIndex++;
+    }
+
+    function updateUI() {
+        document.getElementById('trial-count').innerText = currentTrial;
+        document.getElementById('total-points').innerText = totalPoints;
+    }
+</script>
+
+</body>
+</html>
