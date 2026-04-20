@@ -249,36 +249,57 @@ function getColorHex(c) {
 }
 
 function renderChart(relevantHistory) {
+    // 1. Get scores from history
     const scores = relevantHistory.map(h => h.total_points);
+    
     if (myChart) myChart.destroy();
     
     const ctx = document.getElementById('leaderboardChart').getContext('2d');
     const bins = new Array(10).fill(0);
-    const step = (TRIALS_PER_BLOCK * REWARD_VALUE) / 10;
+    const maxPossible = TRIALS_PER_BLOCK * REWARD_VALUE;
+    const step = maxPossible / 10;
 
+    // 2. Fill bins with historical data
     scores.forEach(s => {
         let idx = Math.min(9, Math.floor(s / step));
         bins[idx]++;
     });
 
+    // 3. Identify the user's bin
+    const userBin = Math.min(9, Math.floor(totalPoints / step));
+
     myChart = new Chart(ctx, {
         type: 'bar',
         data: {
+            // Create clearer labels (e.g., "0-30", "31-60")
             labels: bins.map((_, i) => `${Math.round(i * step)}`),
             datasets: [{
-                label: 'Other Participants',
+                label: 'Number of Participants',
                 data: bins,
-                backgroundColor: bins.map((_, i) => {
-                    const userBin = Math.min(9, Math.floor(totalPoints / step));
+                backgroundColor: bins.map((count, i) => {
+                    // Highlight the user's bin RED
+                    // We also ensure the bar is visible even if count is 0
                     return i === userBin ? '#ff4757' : 'rgba(47, 53, 66, 0.3)';
-                })
+                }),
+                // Add a border to the user bin so it shows up even if it's empty (0 height)
+                borderColor: bins.map((_, i) => i === userBin ? '#ff4757' : 'transparent'),
+                borderWidth: 2
             }]
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            plugins: { legend: { display: false }, title: { display: true, text: 'Total Score Distribution (You are red)' } },
-            scales: { y: { display: false }, x: { grid: { display: false } } }
+            plugins: { 
+                legend: { display: false }, 
+                title: { 
+                    display: true, 
+                    text: `Score Distribution (Your Score: ${totalPoints})` 
+                } 
+            },
+            scales: { 
+                y: { beginAtZero: true, display: true, ticks: { precision: 0 } }, 
+                x: { grid: { display: false } } 
+            }
         }
     });
 }
